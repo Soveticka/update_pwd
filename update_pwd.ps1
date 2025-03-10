@@ -1,32 +1,45 @@
-# I need a script, that will connect to servers provided in a text file. It will generate a password for each server ( random characters 20 chars long ) and then it will change the password for the user. Connection will be done with root. Store the password with hostname in a separate file.
-# Define the path to the file containing the list of servers
-$serversFile = "servers.txt"
-# Define the path to the file where the passwords will be stored
-$passwordsFile = "passwords.txt"
+# Load environment variables from .env file
+$envFile = ".env"
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match "^(.*?)=(.*)$") {
+            [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2])
+        }
+    }
+}
+
+# Define the path to the file containing the list of servers and passwords
+$serverList = "servers.txt"
+$passwordFile = "passwords.txt"
 
 # Function to generate a random password
-function Generate-RandomPassword {
-    param (
-        [int]$length = 20
-    )
-    $chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()"
-    -join ((1..$length) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+function New-RandomPassword {
+    $length = 16
+    $characters = $env:CHARACTERS
+    return -join (1..$length | ForEach-Object { $characters[(Get-Random -Maximum $characters.Length)] })
 }
 
 # Read the list of servers from the file
-$servers = Get-Content -Path $serversFile
+$servers = Get-Content $serverList
 
-# Initialize the passwords file
-"" > $passwordsFile
-
+# Go through each server and change the password for the root user
 foreach ($server in $servers) {
-    # Generate a random password
-    $password = Generate-RandomPassword
-
-    # Change the password for the root user on the server
-    $command = "echo root:`$password` | chpasswd"
-    ssh root@$server $command
-
-    # Store the hostname and password in the passwords file
-    "$server : $password" | Out-File -FilePath $passwordsFile -Append
+    Write-Host "Connecting to $server..."
+    
+    $newPassword = New-RandomPassword
+    $escapedPassword = $newPassword -replace "'", "'\\''"
+    
+    $command = "echo 'root:$escapedPassword' | chpasswd"
+    
+    try {
+        ssh root@$server "$command"
+        if ($?) {
+            "$server : $newPassword" | Out-File -Append -Encoding UTF8 $passwordFile
+            Write-Host "Pwd for $server was successfuly changed."
+        } else {
+            Write-Host "There was a problem during the Pwd change $server."
+        }
+    } catch {
+        Write-Host "Couldn't connect to the server $server."
+    }
 }
